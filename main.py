@@ -160,6 +160,7 @@ class SearchResponse(BaseModel):
 class DownloadRequest(BaseModel):
     message_id: str
     attachment_id: str
+    attachment_name: str
 
 
 class DownloadResponse(BaseModel):

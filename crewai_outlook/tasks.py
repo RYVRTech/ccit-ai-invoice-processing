@@ -1,114 +1,129 @@
 from crewai import Task
 from agents import (
     email_search_agent,
-    attachment_download_agent, 
+    attachment_download_agent,
     data_extraction_agent,
     astra_db_agent,
     invoice_data_agent,
     monitoring_agent
 )
 
+# ----------------------------
 # Task 1: Search emails and identify attachments
+# ----------------------------
 search_task = Task(
-    description="""Search Outlook emails from the specified sender email address.
-    
+    description="""
+    Search Outlook emails from the specified sender email address.
     Requirements:
-    - Search for emails from sender: {sender_email}
-    - Look for emails containing subject: {subject_contains} (if provided)
-    - Search within the last {days_back} days (default: 1 day for fresh daily processing)
-    - Focus only on emails that have attachments
-    - Extract and return messageId, attachmentId, attachmentName for each attachment found
-    - Provide comprehensive metadata including file sizes, content types, and email details
-    
-    Expected Output: JSON structure containing all found attachments with their metadata""",
+    - Search emails from sender: {sender_email}
+    - Optional filter: subject contains {subject_contains}
+    - Look back {days_back} days (default: 1)
+    - Only emails with attachments
+    - Return messageId, attachmentId, attachmentName, and metadata
+    """,
     agent=email_search_agent,
-    expected_output="JSON with attachment details including messageId, attachmentId, attachmentName, and metadata"
+    expected_output="JSON with attachment metadata for all found attachments"
 )
 
-# Task 2: Download attachments
+# ----------------------------
+# Task 2: Download attachments (returns file_path)
+# ----------------------------
 download_task = Task(
-    description="""Download all attachments identified in the search results.
-    
+    description="""
+    Download attachments identified in search_task.
     Requirements:
-    - Use the messageId and attachmentId from the search results
-    - Download each attachment found in the previous task
-    - Ensure all downloads are successful and complete
-    - Return the downloaded file content in base64 format along with file metadata
-    - Handle any download errors gracefully and report them
-    
-    Expected Output: JSON structure with downloaded attachment data including base64 content""",
+    - Use messageId and attachmentId from search_task
+    - Save each attachment locally and return file_path
+    - Return metadata: filename, file_path, size, content_type, checksum
+    - Handle download errors gracefully
+    """,
     agent=attachment_download_agent,
-    expected_output="JSON with downloaded attachment data including filename, content_type, size, and base64 content",
-    context=[search_task]
+    expected_output="JSON with filename, file_path, size, content_type, checksum",
+    context=[search_task],
+    input_transform=lambda result: result.get("attachments", [])
 )
 
-# Task 3: Extract data from attachments
+# ----------------------------
+# Task 3: Extract data from downloaded attachments
+# ----------------------------
 data_extraction_task = Task(
-    description="""Extract meaningful data from the downloaded attachments and structure it into JSON.
-    
+    description="""
+    Extract meaningful data from downloaded files using file_path from download_task.
     Requirements:
-    - Process each downloaded attachment based on its content type
-    - For PDF files: extract text content and metadata
-    - For text files: extract and structure the text content
-    - For JSON files: parse and validate the JSON structure
-    - For other file types: provide basic file information and any extractable data
-    - Structure all extracted data into a clean, consistent JSON format
-    - Include extraction metadata and processing details
-    
-    Expected Output: Structured JSON containing all extracted data from attachments""",
+    - Handle PDFs, text files, CSVs, JSON
+    - For PDFs: extract text and metadata
+    - For text/CSV: extract lines
+    - For JSON: parse directly
+    - Return structured JSON ready for storage
+    - Include filename and file_path in output
+    """,
     agent=data_extraction_agent,
-    expected_output="Structured JSON with extracted data from all processed attachments",
-    context=[download_task]
+    expected_output="JSON containing extracted data for each file",
+    context=[download_task],
+    input_transform=lambda result: result  # result already contains file info
 )
 
+# ----------------------------
 # Task 4: Store attachment metadata in Astra DB
+# ----------------------------
 storage_task = Task(
-    description="""Store the extracted attachment metadata in Astra DB invoice_attachments table.
-    
+    description="""
+    Store extracted attachment metadata into Astra DB (invoice_attachments table).
     Requirements:
-    - Take the extracted data from the previous task
-    - Store attachment metadata in the invoice_attachments table
-    - Include all metadata: message ID, attachment name, sender, subject, timestamps
-    - Ensure data integrity and proper formatting
-    - Return confirmation with the attachment record ID for audit trail
-    
-    Expected Output: JSON confirmation of successful metadata storage with attachment record ID.""",
-    expected_output="JSON object confirming successful storage in Astra DB with attachment record ID",
+    - Use extracted_data from data_extraction_task
+    - Store all relevant fields: message_id, attachment_name, sender, subject, size, content_type
+    - Use file_path only for reference; remove file after insert
+    - Return record_id for audit trail
+    """,
     agent=astra_db_agent,
-    context=[data_extraction_task]
+    expected_output="JSON confirmation of successful metadata storage with record_id",
+    context=[data_extraction_task, search_task],
+    input_transform=lambda result: {
+        "extracted_data": result.get("data", {})
+    } if result.get("success") else {}
 )
 
-# Task 5: Store structured invoice data with audit trail
+# ----------------------------
+# Task 5: Store structured invoice data
+# ----------------------------
 invoice_storage_task = Task(
-    description="""Store structured invoice data in Astra DB invoice_data table with audit trail.
-    
+    description="""
+    Store structured invoice data in Astra DB (invoice_data table) with audit trail.
     Requirements:
-    - Extract structured invoice fields from the data extraction results
-    - Handle multiple invoices per attachment (up to 2 invoices)
-    - Store each invoice separately in the invoice_data table
-    - Link to the attachment record using attachment_record_id for audit trail
-    - Include extraction timestamp and confidence scores
-    - Return confirmation of all stored invoices
-    
-    Expected Output: JSON confirmation of successful structured data storage with invoice details.""",
-    expected_output="JSON object confirming successful storage of structured invoice data with record IDs",
+    - Use extracted invoice fields from data_extraction_task
+    - Link invoices to attachment_record_id from storage_task
+    - Store all relevant fields: message_id, attachment_name
+    - Handle multiple invoices (up to 2 per attachment)
+    - Include extraction timestamp, confidence scores
+    - Return confirmation with all stored invoice record IDs
+    """,
     agent=invoice_data_agent,
-    context=[storage_task]
+    expected_output="JSON confirmation of successful structured invoice storage",
+    context=[storage_task, data_extraction_task, search_task],
+    input_transform=lambda result: {
+        "structured_invoice_data": result.get("data_extraction", {}),
+        "attachment_record_id": result.get("storage", {}).get("record_id", ""),
+        "file_path": result.get("file_path", ""),
+        "message_id": result.get("search", {}).get("messageId", ""),
+        "attachment_name": result.get("search", {}).get("attachmentName", ""),
+    } if result.get("success") else {}
 )
 
-# Task 6: Monitor and report workflow status
+
+# ----------------------------
+# Task 6: Monitor workflow
+# ----------------------------
 monitoring_task = Task(
-    description="""Monitor the entire invoice processing workflow and provide comprehensive status report.
-    
+    description="""
+    Monitor the entire invoice processing workflow.
     Requirements:
     - Review results from all previous tasks
-    - Verify data integrity across both tables (invoice_attachments and invoice_data)
-    - Check for any failures or incomplete processing
-    - Provide summary of processed invoices with key metrics
+    - Verify data integrity in both invoice_attachments and invoice_data tables
+    - Identify failures or incomplete processing
+    - Provide summary metrics of processed invoices
     - Report any issues or recommendations for improvement
-    
-    Expected Output: Comprehensive workflow status report with processing summary.""",
-    expected_output="Detailed status report of the complete invoice processing workflow",
+    """,
     agent=monitoring_agent,
-    context=[storage_task, invoice_storage_task]
+    expected_output="Comprehensive workflow status report",
+    context=[search_task, download_task, data_extraction_task, storage_task, invoice_storage_task]
 )

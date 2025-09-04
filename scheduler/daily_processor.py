@@ -4,11 +4,10 @@ Daily automated invoice processing scheduler
 Runs the CrewAI workflow on a schedule with configurable parameters
 """
 
-import os
 import sys
 import json
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -31,17 +30,17 @@ logger = logging.getLogger(__name__)
 
 class DailyProcessor:
     """Automated daily invoice processing"""
-    
+
     def __init__(self, config_file='scheduler_config.json'):
         """Initialize with configuration"""
         load_dotenv()
         self.config = self.load_config(config_file)
         self.crew = OutlookProcessingCrew()
-    
+
     def load_config(self, config_file):
         """Load scheduler configuration"""
         config_path = Path(__file__).parent / config_file
-        
+
         # Default configuration
         default_config = {
             "search_criteria": {
@@ -54,7 +53,7 @@ class DailyProcessor:
             "notification_webhook": None,
             "max_runtime_minutes": 60
         }
-        
+
         if config_path.exists():
             try:
                 with open(config_path, 'r') as f:
@@ -68,9 +67,9 @@ class DailyProcessor:
             with open(config_path, 'w') as f:
                 json.dump(default_config, f, indent=2)
             logger.info(f"Created default configuration file: {config_file}")
-        
+
         return default_config
-    
+
     def run_daily_processing(self):
         """Execute the daily invoice processing workflow"""
         start_time = datetime.now()
@@ -78,16 +77,16 @@ class DailyProcessor:
         logger.info("🚀 Starting daily invoice processing")
         logger.info(f"📅 Run date: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
         logger.info("=" * 60)
-        
+
         try:
             # Prepare search criteria
             search_criteria = self.config["search_criteria"].copy()
-            
+
             logger.info(f"📋 Search criteria:")
             logger.info(f"   • Sender: {search_criteria['sender_email'] or 'Any'}")
             logger.info(f"   • Subject contains: {search_criteria['subject_contains']}")
             logger.info(f"   • Days back: {search_criteria['days_back']}")
-            
+
             # Run the CrewAI workflow
             logger.info("🤖 Initializing CrewAI workflow...")
             result = self.crew.run(
@@ -95,35 +94,35 @@ class DailyProcessor:
                 subject_contains=search_criteria['subject_contains'],
                 days_back=search_criteria['days_back']
             )
-            
+
             # Log results
             self.log_results(result, start_time)
-            
+
             # Send notification if configured
             if self.config.get("notification_webhook"):
                 self.send_notification(result, success=True)
-            
+
             logger.info("✅ Daily processing completed successfully")
             return True
-            
+
         except Exception as e:
             logger.error(f"❌ Daily processing failed: {str(e)}")
-            
+
             # Send failure notification
             if self.config.get("notification_webhook"):
                 self.send_notification(str(e), success=False)
-            
+
             return False
-    
+
     def log_results(self, result, start_time):
         """Log workflow results"""
         end_time = datetime.now()
         duration = end_time - start_time
-        
+
         logger.info("📊 Workflow Results:")
         logger.info(f"   • Duration: {duration}")
         logger.info(f"   • Status: Completed")
-        
+
         # Try to extract metrics from result
         result_str = str(result)
         if "attachments" in result_str.lower():
@@ -132,29 +131,29 @@ class DailyProcessor:
             logger.info("   • ✅ Invoice data extracted")
         if "stored" in result_str.lower():
             logger.info("   • ✅ Data stored in database")
-    
+
     def send_notification(self, result, success=True):
         """Send notification webhook (if configured)"""
         try:
             import requests
-            
+
             webhook_url = self.config["notification_webhook"]
             if not webhook_url:
                 return
-            
+
             status = "✅ Success" if success else "❌ Failed"
             payload = {
                 "text": f"CrewAI Invoice Processing - {status}",
                 "timestamp": datetime.now().isoformat(),
                 "result": str(result)[:500]  # Truncate long results
             }
-            
+
             response = requests.post(webhook_url, json=payload, timeout=10)
             if response.status_code == 200:
                 logger.info("📧 Notification sent successfully")
             else:
                 logger.warning(f"⚠️ Notification failed: {response.status_code}")
-                
+
         except Exception as e:
             logger.warning(f"⚠️ Failed to send notification: {e}")
 

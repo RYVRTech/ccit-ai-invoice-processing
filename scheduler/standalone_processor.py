@@ -9,10 +9,9 @@ import sys
 import json
 import logging
 import requests
-import base64
-import time
-from datetime import datetime, timedelta
-from pathlib import Path
+from datetime import datetime
+from dotenv import load_dotenv
+
 
 # Add project root to path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -21,7 +20,7 @@ if project_root not in sys.path:
 
 # Note: Environment variables are set directly in Render dashboard
 # No need to load from .env file in production
-
+load_dotenv()
 # Setup logging
 logging.basicConfig(
     level=logging.INFO,
@@ -42,7 +41,7 @@ class StandaloneProcessor:
         self.astra_db_id = os.getenv('ASTRA_DB_DATABASE_ID')
         self.astra_token = os.getenv('ASTRA_DB_APPLICATION_TOKEN')
         self.keyspace = os.getenv('ASTRA_DB_KEYSPACE', 'invoices')
-        
+
         # Validate required environment variables
         missing_vars = []
         if not self.outlook_api_url:
@@ -55,7 +54,7 @@ class StandaloneProcessor:
             missing_vars.append('ASTRA_DB_DATABASE_ID')
         if not self.astra_token:
             missing_vars.append('ASTRA_DB_APPLICATION_TOKEN')
-            
+
         if missing_vars:
             error_msg = f"Missing required environment variables: {', '.join(missing_vars)}"
             logger.error(error_msg)

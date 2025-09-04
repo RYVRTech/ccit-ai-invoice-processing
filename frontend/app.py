@@ -4,14 +4,10 @@ Flask frontend for CrewAI Invoice Processing Monitoring
 Provides real-time conversational updates from the monitoring agent
 """
 
-import os
-import json
-import asyncio
 from datetime import datetime
 from flask import Flask, render_template, jsonify, request, send_from_directory
 from flask_socketio import SocketIO, emit
 import threading
-import time
 from dotenv import load_dotenv
 import sys
 import os
@@ -102,7 +98,7 @@ class ConversationalMonitor:
                 self.add_message('info', "🎯 Starting workflow execution...")
                 
                 # Run the crew workflow
-                result = crew.run(inputs=search_criteria)
+                result = crew.run(**search_criteria)
                 
                 # Parse results and provide conversational feedback
                 self.parse_workflow_results(result)
